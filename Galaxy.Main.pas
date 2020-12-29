@@ -3,9 +3,10 @@ unit Galaxy.Main;
 interface
 
 uses
-  Winapi.Windows, System.SysUtils, System.Types, System.UITypes, System.Classes, System.Variants, FMX.Types,
-  FMX.Controls, FMX.Forms, FMX.Graphics, FMX.Dialogs, FMX.Ani, System.Generics.Collections, System.Threading,
-  System.ImageList, FMX.ImgList;
+  Winapi.Windows, System.SysUtils, System.Types, System.UITypes, System.Classes,
+  System.Variants, FMX.Types, FMX.Controls, FMX.Forms, FMX.Graphics, FMX.Dialogs,
+  FMX.Ani, System.Generics.Collections, System.Threading, System.ImageList,
+  FMX.ImgList;
 
 type
   TSprites = class;
@@ -46,6 +47,7 @@ type
   TBullet = class(TSprite)
   private
     FSpeed: Single;
+    FRotate: Single;
   public
     procedure Draw(Canvas: TCanvas); override;
     procedure Move; override;
@@ -55,6 +57,7 @@ type
   TPlayer = class(TSprite)
   private
     FBitmap: TBitmap;
+    FRotate: Single;
     procedure SetBitmap(const Value: TBitmap);
   public
     procedure Draw(Canvas: TCanvas); override;
@@ -69,6 +72,7 @@ type
     procedure SetManager(const Value: TGameManager);
   public
     property Manager: TGameManager read FManager write SetManager;
+    procedure CheckDeleted;
   end;
 
   TGameManager = class(TComponent)
@@ -192,6 +196,21 @@ end;
 
 { TSprites }
 
+procedure TSprites.CheckDeleted;
+var
+  i: Integer;
+begin
+  i := 0;
+  while (i < Pred(Count)) and (Count > 0) do
+    if Items[i].IsDeleted then
+    begin
+      Items[i].Free;
+      Delete(i);
+    end
+    else
+      Inc(i);
+end;
+
 procedure TSprites.SetManager(const Value: TGameManager);
 begin
   FManager := Value;
@@ -227,24 +246,15 @@ begin
     procedure
     var
       Sprite: TSprite;
-      i: Integer;
     begin
       while FIsRun do
       begin
-        i := 0;
-        while (i < Pred(Sprites.Count)) and (Sprites.Count > 0) do
-          if Sprites[i].IsDeleted then
-          begin
-            Sprites[i].Free;
-            Sprites.Delete(i);
-          end
-          else
-            Inc(i);
+        Sprites.CheckDeleted;
 
         for Sprite in Sprites do
           Sprite.Move;
 
-        Sleep(10);
+        Sleep(1);
       end;
     end);
 end;
@@ -269,19 +279,29 @@ end;
 constructor TPlayer.Create(AOwner: TSprites);
 begin
   inherited;
-  FPosition := TPointF.Create(Owner.Manager.FieldSize.cx / 2, Owner.Manager.FieldSize.cy / 2);
+  FRotate := 0;
+  FPosition := TPointF.Create(Owner.Manager.FieldSize.Width / 2, Owner.Manager.FieldSize.Height / 2);
   FSize := TSizeF.Create(90, 100);
 end;
 
 procedure TPlayer.Draw(Canvas: TCanvas);
-begin         {
+var
+  OldMatrix, Matrix: TMatrix;
+begin              {
   Canvas.Fill.Kind := TBrushKind.Solid;
   Canvas.Fill.Color := TAlphaColorRec.Maroon;
-  Canvas.FillRect(GetRect, 0, 0, [], 1);       }
+  Canvas.FillRect(GetRect, 0, 0, [], 1); }
+  OldMatrix := Canvas.Matrix;
+
+  Matrix := TMatrix.CreateTranslation(-FSize.Width / 2, -FSize.Height / 2) * TMatrix.CreateRotation(DegToRad(FRotate));
+  Matrix := Matrix * TMatrix.CreateTranslation(FPosition.X, FPosition.Y);
+  Canvas.SetMatrix(Matrix);
+
   Canvas.DrawBitmap(FBitmap,
     TRectF.Create(0, 0, FBitmap.Width, FBitmap.Height),
-    TRectF.Create(FPosition, FSize.Width, FSize.Height),
+    TRectF.Create(0, 0, FSize.Width, FSize.Height),
     1);
+  Canvas.SetMatrix(OldMatrix);
 end;
 
 function DivSize(Value: TSizeF; Val: Single): TSizeF;
@@ -290,23 +310,32 @@ begin
   Result.Height := Value.Height / Val;
 end;
 
+function OffsetPoint(Value: TPointF; Angel: Single; Len: Double): TPointF;
+begin
+  Result.X := Value.X + (Sin(Angel / 180 * pi) * Len);
+  Result.Y := Value.Y - (Cos(Angel / 180 * pi) * Len);
+end;
+
 procedure TPlayer.Move;
 var
   Bullet: TBullet;
 begin
   if Owner.Manager.IsPressed(vkLeft) then
-    FPosition.Offset(-10, 0);
+    //FPosition.Offset(-10, 0);
+    FRotate := FRotate - 1;
   if Owner.Manager.IsPressed(vkRight) then
-    FPosition.Offset(+10, 0);
+    //FPosition.Offset(+10, 0);
+    FRotate := FRotate + 1;
   if Owner.Manager.IsPressed(vkUp) then
-    FPosition.Offset(0, -10);
+    FPosition := OffsetPoint(FPosition, FRotate, 3);
   if Owner.Manager.IsPressed(vkDown) then
-    FPosition.Offset(0, +10);
+    FPosition := OffsetPoint(FPosition, FRotate, -3);
 
   if Owner.Manager.IsPressed(vkSpace) then
   begin
     Bullet := TBullet.Create(Owner.Manager.Sprites);
-    Bullet.Position := GetRect.CenterPoint - DivSize(Bullet.Size, 2);
+    Bullet.Position := GetRect.CenterPoint;
+    Bullet.FRotate := FRotate;
     Owner.Manager.Sprites.Add(Bullet);
   end;
 end;
@@ -365,7 +394,9 @@ end;
 
 procedure TBullet.Move;
 begin
-  FPosition.Y := FPosition.Y - FSpeed;
+  //FPosition.Y := FPosition.Y - FSpeed;
+  FPosition := OffsetPoint(FPosition, FRotate, FSpeed);
+
   if FPosition.Y + FSize.Height < 0 then
     FIsDeleted := True;
   if (FPosition.X + FSize.Width < 0) or (FPosition.X + FSize.Width > Owner.Manager.FieldSize.Width) then
